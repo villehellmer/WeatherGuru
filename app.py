@@ -5,6 +5,7 @@ import requests
 from PIL import Image
 from huggingface_hub import InferenceClient
 import json
+from datetime import datetime
 
 class WeatherAPI:
     API_KEY = "33be9b6d3fd713869bead42941bc3b3f"
@@ -24,8 +25,7 @@ class huggingFaceAPI:
         token=API_KEY
     )
     def call_llm(weather_description: str, prompt: str):
-        ending = ""
-        prompt = f"{weather_description} {prompt} . {ending}"
+        prompt = f"Based on the following description of todays weather: {weather_description} Please answer the question: {prompt}"
         response = huggingFaceAPI.llm_client.post(
             json={
                 "inputs": prompt,
@@ -34,9 +34,9 @@ class huggingFaceAPI:
             },
         )
         generated_text = json.loads(response.decode())[0]["generated_text"]
+        print("generated text", generated_text)
         if prompt in generated_text:
             generated_text = generated_text[len(prompt):].strip()
-        generated_text = generated_text.split("\n")[0]
         return generated_text
 
 
@@ -48,6 +48,7 @@ class WeatherApp:
         self.map_view = None
         self.city_entry = None
         self.weather_textbox = None
+        self.current_weather_summary = None
 
         self.setup_ui()
         self.setup_map()
@@ -96,13 +97,29 @@ class WeatherApp:
 
     def create_ai_frame(self):
         ai_frame = ctk.CTkFrame(self.root, fg_color="transparent", bg_color="transparent")
-        ai_frame.place(relx=0.0, rely=0.0, relwidth=0.4, relheight=1)
+        ai_frame.place(relx=0.05, rely=0.0, relwidth=0.30, relheight=1)
 
-        self.weather_textbox = ctk.CTkTextbox(ai_frame, fg_color="transparent")
-        self.weather_textbox.place(relx=0, rely=0, relwidth=1, relheight=0.5)
+        self.header_textbox = ctk.CTkTextbox(ai_frame, fg_color="transparent", font=ctk.CTkFont(family="Arial", size=14, weight="bold"),wrap="word")
+        self.header_textbox.place(relx=0, rely=0.05, relwidth=1, relheight=0.2)
+        self.header_textbox.configure(state="normal")
+        self.header_textbox.insert("1.0", "Select a location!")
+        self.header_textbox.configure(state="disabled")
+
+        self.weather_textbox = ctk.CTkTextbox(ai_frame, fg_color="transparent", wrap="word")
+        self.weather_textbox.place(relx=0, rely=0.25, relwidth=1, relheight=0.40)
         self.weather_textbox.configure(state="normal")
-        self.weather_textbox.insert("1.0", "Weather information will be displayed here.")
+        instruction = "Use the search function or the interactive map to select a location! You will get a real-time weather report from your personal AI assistant - feel free to ask questions about the current weather situation!"
+        self.type_text(self.weather_textbox, instruction, 0)
         self.weather_textbox.configure(state="disabled")
+
+        self.question_textbox = ctk.CTkTextbox(ai_frame, fg_color="transparent", wrap="word", border_width=1, border_color="Gray")
+        self.question_textbox.place(relx=0, rely=0.8, relwidth=1, relheight=0.15)
+        self.question_textbox.configure(state="normal")
+
+        # Add a button to submit the question
+        question_button = ctk.CTkButton(master=ai_frame, text="Ask AI", command=self.ask_ai)
+        question_button.place(relx=0.7, rely=0.95, relwidth=0.25, relheight=0.05)
+
 
     def setup_map(self):
         self.map_view = TkinterMapView(self.root, corner_radius=0)
@@ -134,6 +151,13 @@ class WeatherApp:
             ctk.set_default_color_theme("dark-blue")
             self.theme_button.configure(image=self.theme_button.unlit_icon)
 
+    def ask_ai(self):
+        question = self.question_textbox.get("1.0", "end").strip()
+        print("Question: ", question)
+        ai_response = huggingFaceAPI.call_llm(weather_description=self.current_weather_summary, prompt=question)
+        self.display_weather(ai_response)
+        print("current weather", self.current_weather_summary)
+
     def check_current_weather(self):
         center_lat, center_lon = self.map_view.get_position()
         print("checking weather for pos", center_lat, center_lon)
@@ -152,9 +176,12 @@ class WeatherApp:
             self.map_view.set_zoom(12)
 
             weather_summary = self.summarize_weather(weather_data)
+           
             llm_weather_summary = huggingFaceAPI.call_llm(weather_description=weather_summary, prompt="What is the weather like today?")
             #print("llm response", llm_weather_summary)
+            self.update_header_text(city)
             self.display_weather(llm_weather_summary)
+            self.current_weather_summary = weather_summary
         else:
             messagebox.showerror("Error", "City not found.")
 
@@ -173,8 +200,23 @@ class WeatherApp:
     def display_weather(self, summary):
         self.weather_textbox.configure(state="normal")
         self.weather_textbox.delete("1.0", "end")
-        self.weather_textbox.insert("1.0", summary)
+        self.type_text(self.weather_textbox, summary, 0)
         self.weather_textbox.configure(state="disabled")
+
+    def update_header_text(self, city):
+        now = datetime.now()
+        header = city + "\n" + str(now.strftime("%A, %B %d, %Y at %I:%M %p"))
+        self.header_textbox.configure(state="normal")
+        self.header_textbox.delete("1.0", "end")
+        self.header_textbox.insert("1.0", header)
+        self.weather_textbox.configure(state="disabled")
+
+    def type_text(self, textbox, text, idx):
+        if idx < len(text):
+            textbox.configure(state="normal")  # Enable the textbox for inserting text
+            textbox.insert("end", text[idx])  # Insert the next character
+            textbox.configure(state="disabled")  # Disable the textbox again
+            self.root.after(25, self.type_text, textbox, text, idx + 1)  # Delay for the typing effect
 
 
 if __name__ == "__main__":
